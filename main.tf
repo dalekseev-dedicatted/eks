@@ -22,18 +22,31 @@ module "ecr" {
   repository_name                 = var.ecr_repository_name
   repository_image_scan_on_push   = true
   repository_image_tag_mutability = "IMMUTABLE"
+  create_lifecycle_policy        = false
+  # Skip creating the ECR repository if it already exists in the account
+  create_repository              = false
   tags                            = var.tags
 }
 
 module "eks" {
   source  = "terraform-aws-modules/eks/aws"
-  version = "~> 21.0"
+  version = "~> 21.23"
 
 
   name               = var.cluster_name
   kubernetes_version = var.cluster_version
 
-  # Do not pass account_id/partition; create node groups separately if needed
+  # EKS Auto Mode disabled by not providing compute_config
+  compute_config = {
+    enabled = false
+  }
+
+  # Ensure no encryption_config is passed (we disabled KMS creation)
+  encryption_config = null
+
+  # Avoid creating a KMS key/alias and CloudWatch log group if they already exist
+  create_kms_key                 = false
+  create_cloudwatch_log_group    = false
 
   vpc_id     = module.vpc.vpc_id
   subnet_ids = module.vpc.private_subnets
@@ -43,4 +56,15 @@ module "eks" {
   tags = var.tags
 
   depends_on = [module.vpc]
+}
+
+# Allow nodes to reach the EKS control plane API (port 443)
+resource "aws_security_group_rule" "eks_nodes_to_controlplane" {
+  type                     = "ingress"
+  from_port                = 443
+  to_port                  = 443
+  protocol                 = "tcp"
+  security_group_id        = module.eks.cluster_security_group_id
+  source_security_group_id = module.eks.node_security_group_id
+  description              = "Allow nodes to connect to EKS control plane"
 }

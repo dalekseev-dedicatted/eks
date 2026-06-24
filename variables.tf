@@ -37,7 +37,7 @@ variable "cluster_name" {
 variable "cluster_version" {
   description = "Kubernetes version for the EKS cluster"
   type        = string
-  default     = "1.29"
+  default     = "1.33"
 }
 
 variable "node_desired_capacity" {
@@ -74,6 +74,12 @@ variable "tags" {
 
 variable "karpenter_chart_version" {
   description = "(Optional) Karpenter Helm chart version"
+  type        = string
+  default     = ""
+}
+
+variable "karpenter_policy_name" {
+  description = "Optional override name for the Karpenter IAM policy. If empty, a default name using the cluster name is used."
   type        = string
   default     = ""
 }

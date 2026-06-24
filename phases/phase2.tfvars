@@ -12,4 +12,5 @@ eks_managed_node_groups = {
 }
 
 create_karpenter = true
-karpenter_chart_version = ""
+karpenter_chart_version = "0.16.3"
+karpenter_policy_name = "karpenter-controller-policy-tf-eks-cluster-2"

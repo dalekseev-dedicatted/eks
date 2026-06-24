@@ -2,16 +2,21 @@
 
 provider "kubernetes" {
   host = module.eks.cluster_endpoint
-  token = ""
+  token = data.aws_eks_cluster_auth.cluster.token
   cluster_ca_certificate = base64decode(module.eks.cluster_certificate_authority_data)
 }
 
 provider "helm" {
   kubernetes = {
     host = module.eks.cluster_endpoint
-    token = ""
+    token = data.aws_eks_cluster_auth.cluster.token
     cluster_ca_certificate = base64decode(module.eks.cluster_certificate_authority_data)
   }
+}
+
+data "aws_eks_cluster_auth" "cluster" {
+  name = module.eks.cluster_name
+  depends_on = [module.eks]
 }
 
 resource "kubernetes_namespace" "karpenter" {
@@ -46,7 +51,7 @@ resource "aws_iam_role" "karpenter" {
 
 resource "aws_iam_policy" "karpenter" {
   count = var.create_karpenter ? 1 : 0
-  name        = "karpenter-controller-policy-${var.cluster_name}"
+  name        = var.karpenter_policy_name != "" ? var.karpenter_policy_name : "karpenter-controller-policy-${var.cluster_name}"
   description = "Permissions for Karpenter controller to manage compute resources"
 
   policy = jsonencode({
@@ -122,7 +127,8 @@ resource "kubernetes_service_account" "karpenter" {
 resource "helm_release" "karpenter" {
   count = var.create_karpenter ? 1 : 0
   name             = "karpenter"
-  chart            = "karpenter/karpenter"
+  chart            = "karpenter"
+  version          = var.karpenter_chart_version
   repository       = "https://charts.karpenter.sh"
   namespace        = kubernetes_namespace.karpenter[0].metadata[0].name
   create_namespace = false
@@ -151,4 +157,70 @@ resource "helm_release" "karpenter" {
   ]
 
   depends_on = [kubernetes_service_account.karpenter, aws_iam_role_policy_attachment.karpenter_attach]
+}
+
+# Create Karpenter Provisioners for Spot and On-Demand capacity types.
+# Karpenter will only launch nodes when pods request them (so default is 0 nodes).
+resource "null_resource" "provisioner_spot" {
+  count = var.create_karpenter ? 1 : 0
+
+  triggers = {
+    instance_types = join(",", var.node_instance_types)
+    chart_version  = var.karpenter_chart_version
+  }
+
+  provisioner "local-exec" {
+    command = <<EOT
+aws eks update-kubeconfig --name ${module.eks.cluster_name} --region ${var.aws_region}
+cat <<EOF | kubectl apply -f -
+apiVersion: karpenter.sh/v1alpha5
+kind: Provisioner
+metadata:
+  name: provisioner-spot
+  namespace: karpenter
+spec:
+  provider:
+    instanceTypes: ${jsonencode(var.node_instance_types)}
+    capacityType: "spot"
+  requirements:
+  - key: kubernetes.io/os
+    operator: In
+    values: ["linux"]
+EOF
+EOT
+  }
+
+  depends_on = [helm_release.karpenter]
+}
+
+resource "null_resource" "provisioner_ondemand" {
+  count = var.create_karpenter ? 1 : 0
+
+  triggers = {
+    instance_types = join(",", var.node_instance_types)
+    chart_version  = var.karpenter_chart_version
+  }
+
+  provisioner "local-exec" {
+    command = <<EOT
+aws eks update-kubeconfig --name ${module.eks.cluster_name} --region ${var.aws_region}
+cat <<EOF | kubectl apply -f -
+apiVersion: karpenter.sh/v1alpha5
+kind: Provisioner
+metadata:
+  name: provisioner-ondemand
+  namespace: karpenter
+spec:
+  provider:
+    instanceTypes: ${jsonencode(var.node_instance_types)}
+    capacityType: "on-demand"
+  requirements:
+  - key: kubernetes.io/os
+    operator: In
+    values: ["linux"]
+EOF
+EOT
+  }
+
+  depends_on = [helm_release.karpenter]
 }
